@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Sequence Stream</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .btn-connect {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-disconnect {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-clear {
+            background: #f59e0b;
+            color: white;
+        }
+        
+        .btn-query {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .status {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-weight: 600;
+            text-align: center;
+        }
+        
+        .status.disconnected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .status.connected {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .messages {
+            height: 400px;
+            overflow-y: auto;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 15px;
+            background: #f9fafb;
+        }
+        
+        .message {
+            padding: 12px;
+            margin-bottom: 10px;
+            background: white;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .message-number {
+            font-weight: 700;
+            color: #667eea;
+            font-size: 1.2em;
+        }
+        
+        .message-string {
+            color: #4b5563;
+            font-family: 'Courier New', monospace;
+            margin: 5px 0;
+            word-break: break-all;
+        }
+        
+        .message-time {
+            color: #9ca3af;
+            font-size: 0.85em;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .stat-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        
+        input {
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 6px;
+            flex: 1;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 WebSocket Sequence Stream</h1>
+        
+        <div class="card">
+            <div id="status" class="status disconnected">Disconnected</div>
+            
+            <div class="controls">
+                <button class="btn-connect" onclick="connect()">Connect</button>
+                <button class="btn-disconnect" onclick="disconnect()">Disconnect</button>
+                <button class="btn-clear" onclick="clearMessages()">Clear Messages</button>
+            </div>
+            
+            <h3>Live Stream</h3>
+            <div id="messages" class="messages"></div>
+            
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-value" id="messageCount">0</div>
+                    <div class="stat-label">Messages Received</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="latestSequence">-</div>
+                    <div class="stat-label">Latest Sequence</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>Query API</h3>
+            <div class="controls">
+                <input type="number" id="sequenceInput" placeholder="Enter sequence number">
+                <button class="btn-query" onclick="querySequence()">Query Sequence</button>
+                <button class="btn-query" onclick="queryAll()">Get All</button>
+            </div>
+            <div id="queryResult" style="margin-top: 15px; padding: 15px; background: #f9fafb; border-radius: 6px; min-height: 50px;"></div>
+        </div>
+    </div>
+    
+    <script>
+        let socket = null;
+        let messageCount = 0;
+        
+        function connect() {
+            if (socket !== null) {
+                return;
+            }
+            
+            socket = new WebSocket('ws://localhost:8080/ws/sequence');
+            
+            socket.onopen = function(event) {
+                updateStatus(true);
+                console.log('WebSocket connected');
+            };
+            
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                displayMessage(data);
+                messageCount++;
+                document.getElementById('messageCount').textContent = messageCount;
+                document.getElementById('latestSequence').textContent = data.sequenceNumber;
+            };
+            
+            socket.onclose = function(event) {
+                updateStatus(false);
+                socket = null;
+                console.log('WebSocket disconnected');
+            };
+            
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+        }
+        
+        function disconnect() {
+            if (socket !== null) {
+                socket.close();
+                socket = null;
+            }
+        }
+        
+        function updateStatus(connected) {
+            const statusElement = document.getElementById('status');
+            if (connected) {
+                statusElement.textContent = 'Connected';
+                statusElement.className = 'status connected';
+            } else {
+                statusElement.textContent = 'Disconnected';
+                statusElement.className = 'status disconnected';
+            }
+        }
+        
+        function displayMessage(data) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+            
+            messageDiv.innerHTML = `
+                <div class="message-number">Sequence #${data.sequenceNumber}</div>
+                <div class="message-string">${data.randomString}</div>
+                <div class="message-time">${new Date(data.timestamp).toLocaleString()}</div>
+            `;
+            
+            messagesDiv.insertBefore(messageDiv, messagesDiv.firstChild);
+            
+            // Keep only last 50 messages
+            while (messagesDiv.children.length > 50) {
+                messagesDiv.removeChild(messagesDiv.lastChild);
+            }
+        }
+        
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+            messageCount = 0;
+            document.getElementById('messageCount').textContent = '0';
+        }
+        
+        async function querySequence() {
+            const sequenceNumber = document.getElementById('sequenceInput').value;
+            if (!sequenceNumber) {
+                alert('Please enter a sequence number');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/sequences/${sequenceNumber}`);
+                const resultDiv = document.getElementById('queryResult');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <h4>Result:</h4>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else if (response.status === 404) {
+                    resultDiv.innerHTML = '<p style="color: #ef4444;">Sequence not found</p>';
+                } else {
+                    resultDiv.innerHTML = '<p style="color: #ef4444;">Error querying sequence</p>';
+                }
+            } catch (error) {
+                document.getElementById('queryResult').innerHTML = 
+                    '<p style="color: #ef4444;">Error: ' + error.message + '</p>';
+            }
+        }
+        
+        async function queryAll() {
+            try {
+                const response = await fetch('/api/sequences');
+                const data = await response.json();
+                const resultDiv = document.getElementById('queryResult');
+                
+                resultDiv.innerHTML = `
+                    <h4>All Sequences (${data.length} total):</h4>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                document.getElementById('queryResult').innerHTML = 
+                    '<p style="color: #ef4444;">Error: ' + error.message + '</p>';
+            }
+        }
+    </script>
+</body>
+</html>
+
